@@ -249,14 +249,6 @@ CAN_IRQHandler(void)
         SOC_CAN->IR = FDCAN_IE_TC;
         canbus_notify_tx();
     }
-    if (ir & FDCAN_IR_BO) {
-        SOC_CAN->IR = FDCAN_IR_BO;
-        if (SOC_CAN->CCCR & FDCAN_CCCR_INIT) {
-            SOC_CAN->TXBCR = 7;
-            SOC_CAN->CCCR &= ~FDCAN_CCCR_INIT;
-            canbus_notify_tx();
-        }
-    }
 }
 
 static inline const uint32_t
@@ -414,6 +406,6 @@ can_init(void)
     /*##-3- Configure Interrupts #################################*/
     armcm_enable_irq(CAN_IRQHandler, CAN_IT0_IRQn, 1);
     SOC_CAN->ILE = FDCAN_ILE_EINT0;
-    SOC_CAN->IE = FDCAN_IE_RF0NE | FDCAN_IE_TC | FDCAN_IE_BOE;
+    SOC_CAN->IE = FDCAN_IE_RF0NE | FDCAN_IE_TC;
 }
 DECL_INIT(can_init);
