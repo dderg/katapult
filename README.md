@@ -1,3 +1,6 @@
+# Katapult  (formerly known as CanBoot)
+ Bootloader for ARM Cortex-M MCUs
+
 ## About this fork
 
 This is a fork of [Arksine/katapult](https://github.com/Arksine/katapult)
@@ -35,9 +38,6 @@ framing from the interface MTU, not from the node. A bus brought up with
 `fd on` therefore needs an FD bootloader, and a classic bootloader needs
 `fd off` while flashing — a mismatch makes the node error-flag every
 frame and pushes the bus error-passive.
-
-# Katapult  (formerly known as CanBoot)
- Bootloader for ARM Cortex-M MCUs
 
  This bootloader was initially designed for CAN nodes to be used with
  [Klipper](https://github.com/Klipper3d/klipper).  The bootloader
