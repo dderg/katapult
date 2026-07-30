@@ -145,6 +145,8 @@ canhw_send(struct canbus_msg *msg)
     txfifo->id_section = ids;
     uint32_t len = msg->dlc, dlc_section;
     if (CONFIG_CANBUS_DATA_FREQUENCY && len > 8) {
+        if (len > CANMSG_DATA_MAX)
+            len = CANMSG_DATA_MAX;
         uint32_t dlc = 9;
         while (fdcan_dlc2len[dlc] < len)
             dlc++;
