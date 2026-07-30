@@ -26,6 +26,7 @@ static struct canbus_data {
     // Tx data
     struct task_wake tx_wake;
     uint8_t transmit_pos, transmit_max;
+    uint8_t host_fd;
 
     // Rx data
     struct task_wake rx_wake;
@@ -49,6 +50,18 @@ canserial_notify_tx(void)
     sched_wake_task(&CanData.tx_wake);
 }
 
+static uint32_t
+canserial_chunk_size(uint32_t avail)
+{
+    if (!CONFIG_CANBUS_DATA_FREQUENCY || !CanData.host_fd || avail <= 8)
+        return avail > 8 ? 8 : avail;
+    static const uint8_t fd_sizes[] = {64, 48, 32, 24, 20, 16, 12};
+    for (uint32_t i = 0; i < ARRAY_SIZE(fd_sizes); i++)
+        if (avail >= fd_sizes[i])
+            return fd_sizes[i];
+    return 8;
+}
+
 void
 canserial_tx_task(void)
 {
@@ -63,9 +76,10 @@ canserial_tx_task(void)
     msg.id = id + 1;
     uint32_t tpos = CanData.transmit_pos, tmax = CanData.transmit_max;
     for (;;) {
-        int avail = tmax - tpos, now = avail > 8 ? 8 : avail;
+        int avail = tmax - tpos;
         if (avail <= 0)
             break;
+        uint32_t now = canserial_chunk_size(avail);
         msg.dlc = now;
         memcpy(msg.data, &CanData.transmit_buf[tpos], now);
         int ret = canbus_send(&msg);
@@ -163,6 +177,7 @@ static void
 can_process_clear_canboot_nodeid(void)
 {
     CanData.assigned_id = 0;
+    CanData.host_fd = 0;
     canbus_set_filter(CanData.assigned_id);
 }
 
@@ -234,6 +249,8 @@ canserial_process_data(struct canbus_msg *msg)
             return -1;
         memcpy(&CanData.receive_buf[rpos], msg->data, len);
         CanData.receive_pos = rpos + len;
+        if (CONFIG_CANBUS_DATA_FREQUENCY && len > 8)
+            CanData.host_fd = 1;
         canserial_notify_rx();
     } else if (id == CANBUS_ID_ADMIN
                || (CanData.assigned_id && id == CanData.assigned_id + 1)) {

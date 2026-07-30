@@ -1,14 +1,52 @@
 # Katapult  (formerly known as CanBoot)
  Bootloader for ARM Cortex-M MCUs
 
+## About this fork
+
+This is a fork of [Arksine/katapult](https://github.com/Arksine/katapult)
+that adds **CAN-FD** to the CAN transport on STM32 FDCAN parts (G0B1, G4,
+H7), so a node can be flashed over the same 64-byte framing that
+[Kalico](https://github.com/dderg/kalico) uses at runtime.
+
+Classic CAN fragments every message into up to eight 8-byte frames, and a
+reordered or dropped fragment corrupts the byte stream. One CAN-FD frame
+carries 64 bytes, which removes that fragmentation entirely and cuts the
+frames per flash by roughly half.
+
+What the fork changes:
+
+- `CANBUS_DATA_FREQUENCY` menuconfig option, default `0` — classic CAN
+  stays the default and is unaffected.
+- `src/stm32/fdcan.c`: data-phase bit timing (exact quanta split or a
+  loud halt), 64-byte message-RAM elements, transceiver delay
+  compensation above 1 Mbit, and DLC-to-length conversion both ways.
+- `src/generic/canserial.c`: exact-fit frame chunking so no frame is ever
+  padded, and the FD data phase is used only once the host has proven it
+  speaks FD.
+- `scripts/flashtool.py`: FD frame encode/decode, with the framing chosen
+  from the interface MTU.
+- FDCAN bus-off is now terminal rather than auto-recovering, matching
+  Kalico's fail-loud policy: the node drops off the bus and recovery is an
+  explicit reset.
+
+Bench-verified on an EBB36 v1.2 (STM32G0B1) behind a BTT U2C v2.1 at
+1 Mbit arbitration / 2 Mbit data phase: repeated flashes over CAN-FD with
+zero bus errors, and classic builds unchanged on the same hardware.
+
+One constraint worth knowing before you flash: the host tool picks its
+framing from the interface MTU, not from the node. A bus brought up with
+`fd on` therefore needs an FD bootloader, and a classic bootloader needs
+`fd off` while flashing — a mismatch makes the node error-flag every
+frame and pushes the bus error-passive.
+
  This bootloader was initially designed for CAN nodes to be used with
  [Klipper](https://github.com/Klipper3d/klipper).  The bootloader
  itself makes use of Klipper's hardware abstraction layer, stripped
  down to keep the footprint minimal. In addition to CAN, Katapult now
  supports USB and UART interfaces.
 
-Currently lpc176x, stm32 and rp2040 MCUs are supported.  CAN support is currently
-limited to stm32 F-series and rp2040 devices.
+Currently lpc176x, stm32 and rp2040 MCUs are supported.  CAN support covers
+stm32 F-series (bxCAN), stm32 FDCAN parts (G0B1, G4, H7) and rp2040 devices.
 
 Katapult is licensed under the [GNU GPL v3](/LICENSE).
 

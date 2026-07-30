@@ -50,6 +50,10 @@ def crc16_ccitt(buf: Union[bytes, bytearray]) -> int:
 
 logging.basicConfig(level=logging.INFO)
 CAN_FMT = "<IB3x8s"
+CANFD_FMT = "<IBB2x64s"
+CANFD_BRS_FLAG = 0x01
+CANFD_FRAME_SIZE = 72
+CANFD_PAYLOAD_SIZES = (64, 48, 32, 24, 20, 16, 12)
 CAN_READER_LIMIT = 1024 * 1024
 
 # Katapult Defs
@@ -595,16 +599,27 @@ class CanSocket(BaseSocket):
                 output_line(f"Connecting to CAN UUID {args.uuid} on interface {intf}")
         self.cansock = socket.socket(socket.PF_CAN, socket.SOCK_RAW,
                                      socket.CAN_RAW)
+        self._fd_mode = self._detect_fd_interface()
+        if self._fd_mode:
+            output_line(f"CAN-FD mode enabled on interface {self._can_interface}")
+            self.cansock.setsockopt(
+                socket.SOL_CAN_RAW, socket.CAN_RAW_FD_FRAMES, 1)
         self.admin_node = CanNode(CANBUS_ID_ADMIN, self)
         self.nodes: Dict[int, CanNode] = {
             CANBUS_ID_ADMIN_RESP: self.admin_node
         }
 
-        self.input_buffer = b""
         self.output_packets: List[bytes] = []
-        self.input_busy = False
         self.output_busy = False
         self.closed = True
+
+    def _detect_fd_interface(self) -> bool:
+        mtu_path = pathlib.Path(
+            f"/sys/class/net/{self._can_interface}/mtu")
+        try:
+            return int(mtu_path.read_text().strip()) == CANFD_FRAME_SIZE
+        except (OSError, ValueError):
+            return False
 
     @property
     def is_usb_can_bridge(self) -> bool:
@@ -641,23 +656,36 @@ class CanSocket(BaseSocket):
             # socket closed
             self.close()
             return
-        self.input_buffer += data
-        if self.input_busy:
+        if len(data) not in (16, CANFD_FRAME_SIZE):
+            logging.error("Invalid CAN datagram length %d, closing", len(data))
+            self.close()
             return
-        self.input_busy = True
-        while len(self.input_buffer) >= 16:
-            packet = self.input_buffer[:16]
-            self._process_packet(packet)
-            self.input_buffer = self.input_buffer[16:]
-        self.input_busy = False
+        self._process_packet(data)
 
     def _process_packet(self, packet: bytes) -> None:
-        can_id, length, data = struct.unpack(CAN_FMT, packet)
+        if len(packet) == CANFD_FRAME_SIZE:
+            can_id, length, _flags, data = struct.unpack(CANFD_FMT, packet)
+        else:
+            can_id, length, data = struct.unpack(CAN_FMT, packet)
         can_id &= socket.CAN_EFF_MASK
         payload = data[:length]
         node = self.nodes.get(can_id)
         if node is not None:
             node.feed_data(payload)
+
+    def _fd_chunk_size(self, avail: int) -> int:
+        if not self._fd_mode or avail <= 8:
+            return min(avail, 8)
+        for size in CANFD_PAYLOAD_SIZES:
+            if avail >= size:
+                return size
+        return 8
+
+    def _pack_frame(self, can_id: int, pkt_data: bytes) -> bytes:
+        if len(pkt_data) > 8:
+            return struct.pack(CANFD_FMT, can_id, len(pkt_data),
+                               CANFD_BRS_FLAG, pkt_data)
+        return struct.pack(CAN_FMT, can_id, len(pkt_data), pkt_data)
 
     def send(self, can_id: int, payload: bytes = b"") -> None:
         if can_id > 0x7FF:
@@ -667,12 +695,10 @@ class CanSocket(BaseSocket):
             self.output_packets.append(packet)
         else:
             while payload:
-                length = min(len(payload), 8)
+                length = self._fd_chunk_size(len(payload))
                 pkt_data = payload[:length]
                 payload = payload[length:]
-                packet = struct.pack(
-                    CAN_FMT, can_id, length, pkt_data)
-                self.output_packets.append(packet)
+                self.output_packets.append(self._pack_frame(can_id, pkt_data))
         if self.output_busy:
             return
         self.output_busy = True
